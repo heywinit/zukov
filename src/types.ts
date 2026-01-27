@@ -17,6 +17,7 @@ export interface Process {
   state: ProcessState;
   mailbox: Message[];
   onMessage?: (message: Message) => void | Promise<void>;
+  send(message: Message): void;
 }
 
 export type Message = unknown;
