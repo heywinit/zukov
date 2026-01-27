@@ -12,14 +12,20 @@ export interface ConnectionHandler {
 export class NodeConnection {
   private reader: FrameReader;
   private closed = false;
+  private handler: ConnectionHandler;
 
   constructor(
     private socket: any,
     private nodeId: NodeId,
-    private handler: ConnectionHandler
+    handler: ConnectionHandler
   ) {
     this.reader = new FrameReader();
+    this.handler = handler;
     this.setupListeners();
+  }
+
+  setHandler(handler: ConnectionHandler): void {
+    this.handler = handler;
   }
 
   private setupListeners(): void {
@@ -134,10 +140,41 @@ export async function listenForConnections(
   port: number,
   onConnection: (conn: NodeConnection, nodeId: NodeId) => void
 ): Promise<any> {
-  const server = Bun.serve({
+  const server = Bun.listen({
+    hostname: "0.0.0.0",
     port: port,
-    fetch(req, server) {
-      return new Response("Zukov Node", { status: 200 });
+    socket: {
+      open(socket) {
+        const nodeId = `node-${Date.now()}`;
+        const tempHandler: ConnectionHandler = {
+          onMessage: async () => {},
+          onClose: () => {
+            socket.end();
+          },
+          onError: (error) => {
+            console.error(`Connection error:`, error);
+          },
+        };
+        
+        const conn = new NodeConnection(socket, nodeId, tempHandler);
+        (socket as any).zukovConn = conn;
+        onConnection(conn, nodeId);
+      },
+      data(socket, data) {
+        const conn = (socket as any).zukovConn;
+        if (conn) {
+          conn.handleIncomingData(data);
+        }
+      },
+      close(socket) {
+        const conn = (socket as any).zukovConn;
+        if (conn) {
+          conn.close();
+        }
+      },
+      error(socket, error) {
+        console.error(`Socket error:`, error);
+      },
     },
   });
 
