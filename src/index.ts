@@ -1,6 +1,6 @@
 /**
  * Zukov - A distributed compute framework for Bun
- * BEAM-inspired distributed task execution for the JavaScript ecosystem
  */
 
-console.log("Zukov runtime starting...");
+export { ZukovRuntime } from "./runtime.ts";
+export type { ProcessId, ProcessSpec, Message, ProcessState } from "./types.ts";

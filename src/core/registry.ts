@@ -2,8 +2,8 @@
  * Process registry - tracks all processes in the node
  */
 
-import type { Process, ProcessId } from "../types.js";
-import { ZukovProcess } from "./process.js";
+import type { Process, ProcessId } from "../types.ts";
+import { ZukovProcess } from "./process.ts";
 
 export class ProcessRegistry {
   private processes = new Map<ProcessId, Process>();

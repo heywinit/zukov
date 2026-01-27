@@ -3,9 +3,9 @@
  * Handles routing messages between processes
  */
 
-import type { ProcessId, Message } from "../types.js";
-import { ProcessRegistry } from "./registry.js";
-import { isLocalPid } from "./pid.js";
+import type { ProcessId, Message } from "../types.ts";
+import { ProcessRegistry } from "./registry.ts";
+import { isLocalPid } from "./pid.ts";
 
 export class MessageRouter {
   constructor(

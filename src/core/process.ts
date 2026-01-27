@@ -2,8 +2,8 @@
  * Process abstraction - lightweight isolated execution context
  */
 
-import type { Process, ProcessId, ProcessSpec, Message, ProcessState } from "../types.js";
-import { createPid, generateLocalPid } from "./pid.js";
+import { type Process, type ProcessId, type ProcessSpec, type Message, ProcessState } from "../types.ts";
+import { createPid, generateLocalPid } from "./pid.ts";
 
 export class ZukovProcess implements Process {
   public readonly pid: ProcessId;
@@ -19,9 +19,6 @@ export class ZukovProcess implements Process {
     this.spec = spec;
   }
 
-  /**
-   * Start the process
-   */
   async start(): Promise<void> {
     if (this.state !== ProcessState.Init) {
       throw new Error(`Process ${this.pid} is not in init state`);
@@ -44,9 +41,6 @@ export class ZukovProcess implements Process {
     this.messageLoop();
   }
 
-  /**
-   * Send a message to this process
-   */
   send(message: Message): void {
     if (this.state === ProcessState.Terminated) {
       return;
@@ -54,18 +48,12 @@ export class ZukovProcess implements Process {
     this.mailbox.push(message);
   }
 
-  /**
-   * Terminate the process
-   */
   terminate(): void {
     this.state = ProcessState.Terminated;
     this.running = false;
     this.mailbox = [];
   }
 
-  /**
-   * Message processing loop
-   */
   private async messageLoop(): Promise<void> {
     while (this.running && this.state === ProcessState.Running) {
       if (this.mailbox.length > 0) {

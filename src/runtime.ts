@@ -1,12 +1,7 @@
-/**
- * Zukov Runtime
- * Main entry point for the distributed compute framework
- */
-
-import type { ProcessId, ProcessSpec, Message } from "./types.js";
-import { ZukovProcess } from "./core/process.js";
-import { ProcessRegistry } from "./core/registry.js";
-import { MessageRouter } from "./core/message.js";
+import type { ProcessId, ProcessSpec, Message } from "./types.ts";
+import { ZukovProcess } from "./core/process.ts";
+import { ProcessRegistry } from "./core/registry.ts";
+import { MessageRouter } from "./core/message.ts";
 
 export class ZukovRuntime {
   private nodeId: string;
@@ -20,9 +15,6 @@ export class ZukovRuntime {
     this.router = new MessageRouter(this.registry, this.nodeId);
   }
 
-  /**
-   * Start the runtime
-   */
   async start(): Promise<void> {
     if (this.running) {
       throw new Error("Runtime is already running");
@@ -31,9 +23,6 @@ export class ZukovRuntime {
     console.log(`Zukov node ${this.nodeId} started`);
   }
 
-  /**
-   * Stop the runtime
-   */
   async stop(): Promise<void> {
     this.running = false;
     // Terminate all processes
@@ -48,9 +37,6 @@ export class ZukovRuntime {
     console.log(`Zukov node ${this.nodeId} stopped`);
   }
 
-  /**
-   * Spawn a new process
-   */
   async spawn(spec: ProcessSpec): Promise<ProcessId> {
     if (!this.running) {
       throw new Error("Runtime is not running");
@@ -63,9 +49,6 @@ export class ZukovRuntime {
     return process.pid;
   }
 
-  /**
-   * Send a message to a process
-   */
   send(to: ProcessId, message: Message): boolean {
     if (!this.running) {
       return false;
@@ -73,23 +56,14 @@ export class ZukovRuntime {
     return this.router.send(to, message);
   }
 
-  /**
-   * Get the current node ID
-   */
   getNodeId(): string {
     return this.nodeId;
   }
 
-  /**
-   * Get process count
-   */
   getProcessCount(): number {
     return this.registry.size();
   }
 
-  /**
-   * Generate a unique node ID
-   */
   private generateNodeId(): string {
     return `node-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   }
