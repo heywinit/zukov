@@ -1,4 +1,22 @@
 import { ZukovRuntime } from "../src/index.ts";
+import { TaskQueue } from "../src/task/queue.ts";
+import type { Task } from "../src/types.ts";
+
+type FibTaskPayload = { n: number };
+
+type MasterMessage =
+  | {
+      type: "slave_ready";
+      slavePid: string;
+      slaveNodeId: string;
+    }
+  | {
+      type: "result";
+      slavePid: string;
+      taskId: string;
+      n: number;
+      result: number;
+    };
 
 async function main() {
   const runtime = new ZukovRuntime("master");
@@ -9,118 +27,61 @@ async function main() {
   console.log(`Master node ID: ${runtime.getNodeId()}`);
   console.log("Waiting for slaves to connect...\n");
 
-  const tasks = new Map<string, { n: number; slavePid: string }>();
+  const queue = new TaskQueue<FibTaskPayload>();
   const slaves = new Set<string>();
   const slaveLastTask = new Map<string, number>();
-  let taskIdCounter = 0;
+
+  const assignTaskToSlave = (slavePid: string) => {
+    const task = queue.enqueue({ n: Math.floor(Math.random() * 11) });
+    console.log(
+      `Assigning task ${task.id}: fibonacci(${task.payload.n}) to ${slavePid}`,
+    );
+    slaveLastTask.set(slavePid, Date.now());
+    (globalThis as any).runtime.send(slavePid as any, {
+      type: "calculate",
+      taskId: task.id,
+      n: task.payload.n,
+    });
+  };
 
   const masterPid = await runtime.spawn({
     init: () => {
       console.log("Master process initialized");
     },
     handleMessage: async (message) => {
-      if (typeof message === "object" && message !== null) {
-        const msg = message as {
-          type: string;
-          slavePid?: string;
-          taskId?: string;
-          n?: number;
-          result?: number;
+      const msg = message as MasterMessage;
+
+      if (msg.type === "slave_ready") {
+        const slavePid = msg.slavePid;
+        const slaveNodeId = msg.slaveNodeId;
+
+        // For now we trust the connection mapping done in runtime.listen
+        slaves.add(slavePid);
+        slaveLastTask.set(slavePid, Date.now());
+        console.log(`Slave connected: ${slavePid} (node: ${slaveNodeId})`);
+
+        assignTaskToSlave(slavePid);
+      } else if (msg.type === "result") {
+        const task = queue.complete(msg.taskId, msg.result);
+        if (task) {
+          console.log(
+            `Task ${msg.taskId} completed: fibonacci(${task.payload.n}) = ${msg.result}`,
+          );
+        }
+
+        const slavePid = msg.slavePid;
+        const lastTaskTime = slaveLastTask.get(slavePid) || 0;
+        const timeSinceLastTask = Date.now() - lastTaskTime;
+        const delay = 10000 - timeSinceLastTask;
+
+        const schedule = () => {
+          assignTaskToSlave(slavePid);
         };
 
-        if (msg.type === "slave_ready") {
-          const slavePid = msg.slavePid!;
-          const slaveNodeId = (msg as any).slaveNodeId;
-          
-          if (slaveNodeId) {
-            const nodeRegistry = runtime.getNodeRegistry();
-            const node = nodeRegistry.get(slaveNodeId);
-            if (!node) {
-              const newNode = {
-                id: slaveNodeId,
-                address: undefined,
-                port: undefined,
-                connected: true,
-              };
-              (nodeRegistry as any).nodes.set(slaveNodeId, newNode);
-            }
-            
-            const connManager = (runtime as any).connectionManager;
-            const connections = connManager.connections as Map<string, any>;
-            const tempNodeId = Array.from(connections.keys()).find(
-              (id) => typeof id === "string" && id.startsWith("node-") && id !== "master"
-            ) as string | undefined;
-            if (tempNodeId) {
-              const conn = connections.get(tempNodeId);
-              if (conn) {
-                connections.delete(tempNodeId);
-                connections.set(slaveNodeId, conn);
-                runtime.getRouter().removeConnection(tempNodeId);
-                runtime.getRouter().setConnection(slaveNodeId, conn);
-                (conn as any).nodeId = slaveNodeId;
-              }
-            }
-          }
-          
-          slaves.add(slavePid);
-          slaveLastTask.set(slavePid, Date.now());
-          console.log(`Slave connected: ${slavePid} (node: ${slaveNodeId})`);
-
-          const n = Math.floor(Math.random() * 11);
-          const taskId = `task-${++taskIdCounter}`;
-          tasks.set(taskId, { n, slavePid });
-
-          console.log(`Assigning task ${taskId}: fibonacci(${n}) to ${slavePid}`);
-          runtime.send(slavePid as any, {
-            type: "calculate",
-            taskId,
-            n,
-          });
-        } else if (msg.type === "result") {
-          const task = tasks.get(msg.taskId!);
-          if (task) {
-            console.log(
-              `Task ${msg.taskId} completed: fibonacci(${task.n}) = ${msg.result}`
-            );
-            tasks.delete(msg.taskId!);
-
-            const slavePid = msg.slavePid!;
-            const lastTaskTime = slaveLastTask.get(slavePid) || 0;
-            const timeSinceLastTask = Date.now() - lastTaskTime;
-            const delay = 10000 - timeSinceLastTask;
-
-            if (delay > 0) {
-              setTimeout(() => {
-                const n = Math.floor(Math.random() * 11);
-                const newTaskId = `task-${++taskIdCounter}`;
-                tasks.set(newTaskId, { n, slavePid });
-
-                console.log(
-                  `Assigning task ${newTaskId}: fibonacci(${n}) to ${slavePid}`
-                );
-                runtime.send(slavePid as any, {
-                  type: "calculate",
-                  taskId: newTaskId,
-                  n,
-                });
-                slaveLastTask.set(slavePid, Date.now());
-              }, delay);
-            } else {
-              const n = Math.floor(Math.random() * 11);
-              const newTaskId = `task-${++taskIdCounter}`;
-              tasks.set(newTaskId, { n, slavePid });
-
-              console.log(
-                `Assigning task ${newTaskId}: fibonacci(${n}) to ${slavePid}`
-              );
-              runtime.send(slavePid as any, {
-                type: "calculate",
-                taskId: newTaskId,
-                n,
-              });
-              slaveLastTask.set(slavePid, Date.now());
-            }
-          }
+        if (delay > 0) {
+          setTimeout(schedule, delay);
+        } else {
+          schedule();
         }
       }
     },

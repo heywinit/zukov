@@ -26,3 +26,24 @@ export interface ProcessSpec {
   init?: () => void | Promise<void>;
   handleMessage?: (message: Message) => void | Promise<void>;
 }
+
+export type TaskId = string;
+
+export enum TaskStatus {
+  Pending = "pending",
+  Running = "running",
+  Completed = "completed",
+  Failed = "failed",
+}
+
+export interface Task<T = Message> {
+  id: TaskId;
+  payload: T;
+  createdAt: number;
+  status: TaskStatus;
+  assignedTo?: ProcessId;
+  startedAt?: number;
+  completedAt?: number;
+  result?: Message;
+  error?: string;
+}
