@@ -13,10 +13,15 @@ export class ZukovProcess implements Process {
 
   private spec: ProcessSpec;
   private running = false;
+  private exitListeners: Array<(reason: string) => void | Promise<void>> = [];
 
   constructor(nodeId: string, spec: ProcessSpec) {
     this.pid = createPid(nodeId, generateLocalPid());
     this.spec = spec;
+  }
+
+  onExit(listener: (reason: string) => void | Promise<void>): void {
+    this.exitListeners.push(listener);
   }
 
   async start(): Promise<void> {
@@ -27,17 +32,15 @@ export class ZukovProcess implements Process {
     this.state = ProcessState.Running;
     this.running = true;
 
-    // Run init if provided
     if (this.spec.init) {
       try {
         await this.spec.init();
       } catch (error) {
-        this.terminate();
+        await this.exit("init_failed");
         throw error;
       }
     }
 
-    // Start message loop
     this.messageLoop();
   }
 
@@ -48,7 +51,37 @@ export class ZukovProcess implements Process {
     this.mailbox.push(message);
   }
 
+  async exit(reason: string = "normal"): Promise<void> {
+    if (this.state === ProcessState.Terminated) {
+      return;
+    }
+
+    this.state = ProcessState.Terminated;
+    this.running = false;
+
+    for (const listener of this.exitListeners) {
+      try {
+        await listener(reason);
+      } catch (error) {
+        console.error(`Error in exit listener for process ${this.pid}:`, error);
+      }
+    }
+
+    if (this.spec.onExit) {
+      try {
+        await this.spec.onExit(reason);
+      } catch (error) {
+        console.error(`Error in spec.onExit for process ${this.pid}:`, error);
+      }
+    }
+
+    this.mailbox = [];
+  }
+
   terminate(): void {
+    if (this.state === ProcessState.Terminated) {
+      return;
+    }
     this.state = ProcessState.Terminated;
     this.running = false;
     this.mailbox = [];
@@ -58,7 +91,7 @@ export class ZukovProcess implements Process {
     while (this.running && this.state === ProcessState.Running) {
       if (this.mailbox.length > 0) {
         const message = this.mailbox.shift()!;
-        
+
         try {
           if (this.onMessage) {
             await this.onMessage(message);
@@ -67,10 +100,8 @@ export class ZukovProcess implements Process {
           }
         } catch (error) {
           console.error(`Error handling message in process ${this.pid}:`, error);
-          // Process continues running even if message handling fails
         }
       } else {
-        // Yield to event loop when no messages
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
     }

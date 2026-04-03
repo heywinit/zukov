@@ -4,6 +4,7 @@ import { isLocalPid, parsePid } from "./pid.ts";
 import { MessageType } from "../protocol/protocol.ts";
 import type { NodeConnection } from "../protocol/connection.ts";
 import type { NodeRegistry } from "../node/registry.ts";
+import type { ProcessLinker } from "./linker.ts";
 
 interface PendingRequest {
   resolve: (message: Message | null) => void;
@@ -32,8 +33,13 @@ export class MessageRouter {
   constructor(
     private registry: ProcessRegistry,
     private nodeRegistry: NodeRegistry,
-    private nodeId: string
+    private nodeId: string,
+    private linker?: ProcessLinker,
   ) {}
+
+  setLinker(linker: ProcessLinker): void {
+    this.linker = linker;
+  }
 
   private generateCorrelationId(): string {
     return `${this.nodeId}-${Date.now()}-${++this.correlationCounter}`;
@@ -48,7 +54,6 @@ export class MessageRouter {
   }
 
   send(to: ProcessId, message: Message, from?: ProcessId): boolean {
-    // Handle replies specially - they need to go to the reply process
     if (this.isReply(message)) {
       const targetPid = this.replyProcess || to;
       if (!isLocalPid(targetPid, this.nodeId)) {
@@ -76,20 +81,14 @@ export class MessageRouter {
       return false;
     }
 
-    // If it's a request message, we need to handle the reply routing
-    if (this.isRequest(message)) {
-      process.send(message);
-      return true;
-    }
-
     process.send(message);
     return true;
   }
 
-  private sendRemote(to: ProcessId, message: Message, from?: ProcessId): boolean {
+  sendRemote(to: ProcessId, message: Message, from?: ProcessId): boolean {
     const { nodeId: targetNodeId } = parsePid(to);
     const conn = this.connections.get(targetNodeId);
-    
+
     if (!conn || conn.isClosed()) {
       const node = this.nodeRegistry.get(targetNodeId);
       if (!node || !node.connected) {
@@ -107,6 +106,112 @@ export class MessageRouter {
     }
 
     return false;
+  }
+
+  sendLink(pid1: ProcessId, pid2: ProcessId): boolean {
+    if (isLocalPid(pid1, this.nodeId) && isLocalPid(pid2, this.nodeId)) {
+      this.linker?.link(pid1, pid2);
+      return true;
+    }
+
+    if (isLocalPid(pid1, this.nodeId) && !isLocalPid(pid2, this.nodeId)) {
+      const { nodeId: targetNodeId } = parsePid(pid2);
+      const conn = this.connections.get(targetNodeId);
+      if (conn) {
+        conn.send(MessageType.Link, { pid1, pid2 });
+        this.linker?.link(pid1, pid2);
+        return true;
+      }
+      return false;
+    }
+
+    if (!isLocalPid(pid1, this.nodeId) && isLocalPid(pid2, this.nodeId)) {
+      const { nodeId: targetNodeId } = parsePid(pid1);
+      const conn = this.connections.get(targetNodeId);
+      if (conn) {
+        conn.send(MessageType.Link, { pid1, pid2 });
+        this.linker?.link(pid1, pid2);
+        return true;
+      }
+      return false;
+    }
+
+    return false;
+  }
+
+  sendUnlink(pid1: ProcessId, pid2: ProcessId): void {
+    this.linker?.unlink(pid1, pid2);
+
+    if (!isLocalPid(pid1, this.nodeId)) {
+      const { nodeId: targetNodeId } = parsePid(pid1);
+      const conn = this.connections.get(targetNodeId);
+      conn?.send(MessageType.Link, { pid1, pid2, unlink: true });
+    }
+    if (!isLocalPid(pid2, this.nodeId)) {
+      const { nodeId: targetNodeId } = parsePid(pid2);
+      const conn = this.connections.get(targetNodeId);
+      conn?.send(MessageType.Link, { pid1, pid2, unlink: true });
+    }
+  }
+
+  sendMonitor(fromPid: ProcessId, toPid: ProcessId): string {
+    const ref = this.linker?.generateRef() || `monitor-${Date.now()}`;
+
+    if (isLocalPid(toPid, this.nodeId)) {
+      this.linker?.monitor(fromPid, toPid);
+      return ref;
+    }
+
+    const { nodeId: targetNodeId } = parsePid(toPid);
+    const conn = this.connections.get(targetNodeId);
+    if (conn) {
+      conn.send(MessageType.Monitor, { ref, fromPid, toPid });
+      this.linker?.monitor(fromPid, toPid);
+    }
+
+    return ref;
+  }
+
+  sendDemonitor(ref: string, fromPid: ProcessId, toPid: ProcessId): boolean {
+    this.linker?.demonitor(ref);
+
+    if (!isLocalPid(toPid, this.nodeId)) {
+      const { nodeId: targetNodeId } = parsePid(toPid);
+      const conn = this.connections.get(targetNodeId);
+      if (conn) {
+        conn.send(MessageType.Monitor, { ref, fromPid, toPid, demonitor: true });
+        return true;
+      }
+      return false;
+    }
+
+    return true;
+  }
+
+  async sendExit(fromPid: ProcessId, toPid: ProcessId, reason: string): Promise<void> {
+    if (isLocalPid(toPid, this.nodeId)) {
+      const process = this.registry.get(toPid);
+      if (process && process.state !== "terminated") {
+        process.send({ type: "exit", fromPid, toPid, reason });
+      }
+    } else {
+      const { nodeId: targetNodeId } = parsePid(toPid);
+      const conn = this.connections.get(targetNodeId);
+      conn?.send(MessageType.Exit, { fromPid, toPid, reason });
+    }
+  }
+
+  async sendDown(ref: string, fromPid: ProcessId, toPid: ProcessId, reason: string): Promise<void> {
+    if (isLocalPid(fromPid, this.nodeId)) {
+      const process = this.registry.get(fromPid);
+      if (process && process.state !== "terminated") {
+        process.send({ type: "down", ref, toPid, fromPid, reason });
+      }
+    } else {
+      const { nodeId: targetNodeId } = parsePid(fromPid);
+      const conn = this.connections.get(targetNodeId);
+      conn?.send(MessageType.Down, { ref, fromPid, toPid, reason });
+    }
   }
 
   async sendAndWait(
@@ -217,5 +322,23 @@ export class MessageRouter {
       correlationId,
       payload,
     };
+  }
+
+  async handleRemoteExit(fromPid: ProcessId, toPid: ProcessId, reason: string): Promise<void> {
+    if (isLocalPid(toPid, this.nodeId)) {
+      const process = this.registry.get(toPid);
+      if (process && process.state !== "terminated") {
+        process.send({ type: "exit", fromPid, toPid, reason });
+      }
+    }
+  }
+
+  async handleRemoteDown(ref: string, fromPid: ProcessId, toPid: ProcessId, reason: string): Promise<void> {
+    if (isLocalPid(fromPid, this.nodeId)) {
+      const process = this.registry.get(fromPid);
+      if (process && process.state !== "terminated") {
+        process.send({ type: "down", ref, toPid, fromPid, reason });
+      }
+    }
   }
 }

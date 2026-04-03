@@ -4,17 +4,14 @@ export function serializeMessage(type: MessageType, data: unknown): Uint8Array {
   const json = JSON.stringify(data);
   const encoder = new TextEncoder();
   const payload = encoder.encode(json);
-  
+
   const frame = new Uint8Array(FRAME_HEADER_SIZE + payload.length);
   const view = new DataView(frame.buffer);
-  
-  // Write length (4 bytes, big-endian)
+
   view.setUint32(0, payload.length, false);
-  // Write type (1 byte)
   frame[4] = type;
-  // Write payload
   frame.set(payload, FRAME_HEADER_SIZE);
-  
+
   return frame;
 }
 
@@ -23,7 +20,7 @@ export function deserializeMessage(frame: Uint8Array): ProtocolMessage | null {
     return null;
   }
 
-  const view = new DataView(frame.buffer);
+  const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
   const length = view.getUint32(0, false);
   const type = frame[4] as MessageType;
 
@@ -49,9 +46,19 @@ export function deserializeMessage(frame: Uint8Array): ProtocolMessage | null {
 export function createFrame(data: Uint8Array): Uint8Array {
   const frame = new Uint8Array(FRAME_HEADER_SIZE + data.length);
   const view = new DataView(frame.buffer);
-  
+
   view.setUint32(0, data.length, false);
   frame.set(data, FRAME_HEADER_SIZE);
-  
+
   return frame;
+}
+
+export function parsePayload<T = unknown>(payload: Uint8Array): T | null {
+  const decoder = new TextDecoder();
+  const json = decoder.decode(payload);
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    return null;
+  }
 }

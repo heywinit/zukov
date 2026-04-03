@@ -7,6 +7,11 @@ export enum MessageType {
   Ping = 0x06,
   Pong = 0x07,
   NodeInfo = 0x08,
+  Down = 0x09,
+  AuthChallenge = 0x10,
+  AuthResponse = 0x11,
+  AuthAck = 0x12,
+  AuthReject = 0x13,
 }
 
 export interface ProtocolMessage {
@@ -29,7 +34,38 @@ export interface SendMessage {
 
 export interface ExitMessage {
   type: MessageType.Exit;
-  pid: string;
+  fromPid: string;
+  toPid: string;
+  reason: string;
+}
+
+export interface DownMessage {
+  type: MessageType.Down;
+  ref: string;
+  fromPid: string;
+  toPid: string;
+  reason: string;
+}
+
+export interface AuthChallengeMessage {
+  type: MessageType.AuthChallenge;
+  nodeId: string;
+  nonce: string;
+}
+
+export interface AuthResponseMessage {
+  type: MessageType.AuthResponse;
+  nodeId: string;
+  signature: string;
+}
+
+export interface AuthAckMessage {
+  type: MessageType.AuthAck;
+  nodeId: string;
+}
+
+export interface AuthRejectMessage {
+  type: MessageType.AuthReject;
   reason: string;
 }
 
